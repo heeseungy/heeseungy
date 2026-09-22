@@ -17,9 +17,9 @@
 <br>
 <br>
 
-<details>
+<!-- <details>
 <br>
-<br>
+<br> -->
 <summary>
 🧑‍💻 About me
 </summary>
@@ -88,7 +88,7 @@
     </tr>
   </tbody>
 </table>
-</details>
+<!-- </details> -->
 
 <br>
 <br>
