@@ -5,6 +5,11 @@ const STATS_GIST_ID = process.env.STATS_GIST_ID;
 const TIMEZONE = process.env.TIMEZONE || "Asia/Seoul";
 const ALL_COMMITS = process.env.ALL_COMMITS === "true";
 const K_FORMAT = process.env.K_FORMAT === "true";
+const SEARCH_PAGE_SIZE = 100;
+const SEARCH_RESULT_LIMIT = 1000;
+const SEARCH_REQUEST_INTERVAL_MS = 2100;
+const MILLISECONDS_PER_SECOND = 1000;
+let lastSearchRequestAt = 0;
 
 function requireValue(name, value) {
   if (!value) {
@@ -64,84 +69,156 @@ function hourInTimezone(date, timezone) {
   return Number(formatter.format(new Date(date)));
 }
 
+function formatSearchTimestamp(date) {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function splitDateRange(from, to) {
+  const fromTime = Date.parse(from);
+  const toTime = Date.parse(to);
+  const spanInSeconds = Math.floor(
+    (toTime - fromTime) / MILLISECONDS_PER_SECOND,
+  );
+
+  if (spanInSeconds < 1) return null;
+
+  const leftEndTime =
+    fromTime + Math.floor(spanInSeconds / 2) * MILLISECONDS_PER_SECOND;
+  return {
+    left: [from, formatSearchTimestamp(new Date(leftEndTime))],
+    right: [
+      formatSearchTimestamp(new Date(leftEndTime + MILLISECONDS_PER_SECOND)),
+      to,
+    ],
+  };
+}
+
+function addSearchResults(commits, items) {
+  for (const item of items) {
+    if (!item?.sha || !item.repository || item.repository.fork) continue;
+
+    const committedDate = item.commit?.committer?.date;
+    if (!committedDate) continue;
+
+    const repository = item.repository.id || item.repository.full_name;
+    commits.set(`${repository}:${item.sha}`, committedDate);
+  }
+}
+
+async function requestCommitSearchApi(github, parameters) {
+  const waitTime =
+    lastSearchRequestAt + SEARCH_REQUEST_INTERVAL_MS - Date.now();
+
+  if (waitTime > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
+  }
+
+  const response = await github.request("GET /search/commits", parameters);
+  lastSearchRequestAt = Date.now();
+  return response;
+}
+
+async function requestCommitSearch(github, login, from, to, page) {
+  const { data } = await requestCommitSearchApi(github, {
+    q: `author:${login} committer-date:${from}..${to}`,
+    sort: "committer-date",
+    order: "asc",
+    per_page: SEARCH_PAGE_SIZE,
+    page,
+    headers: {
+      accept: "application/vnd.github+json",
+    },
+  });
+
+  return data;
+}
+
+async function collectSplitRanges(github, core, login, from, to, commits) {
+  const ranges = splitDateRange(from, to);
+  if (!ranges) {
+    throw new Error(
+      `GitHub could not return a complete commit search for the one-second range ${from}..${to}`,
+    );
+  }
+
+  await collectCommitsForRange(
+    github,
+    core,
+    login,
+    ranges.left[0],
+    ranges.left[1],
+    commits,
+  );
+  await collectCommitsForRange(
+    github,
+    core,
+    login,
+    ranges.right[0],
+    ranges.right[1],
+    commits,
+  );
+}
+
+async function collectCommitsForRange(github, core, login, from, to, commits) {
+  const firstPage = await requestCommitSearch(github, login, from, to, 1);
+  const mustSplit =
+    firstPage.incomplete_results || firstPage.total_count > SEARCH_RESULT_LIMIT;
+
+  core.info(
+    `Commit search ${from}..${to}: ${firstPage.total_count} result(s)` +
+      (firstPage.incomplete_results ? " (incomplete)" : ""),
+  );
+
+  if (mustSplit) {
+    return collectSplitRanges(github, core, login, from, to, commits);
+  }
+
+  addSearchResults(commits, firstPage.items || []);
+  let pageCount = Math.ceil(firstPage.total_count / SEARCH_PAGE_SIZE);
+
+  for (let page = 2; page <= pageCount; page += 1) {
+    const result = await requestCommitSearch(github, login, from, to, page);
+    if (result.incomplete_results || result.total_count > SEARCH_RESULT_LIMIT) {
+      core.warning(
+        `Commit search changed while reading ${from}..${to}; retrying smaller ranges`,
+      );
+      return collectSplitRanges(github, core, login, from, to, commits);
+    }
+
+    if (result.total_count !== firstPage.total_count) {
+      core.warning(
+        `Commit search count for ${from}..${to} changed from ${firstPage.total_count} to ${result.total_count}`,
+      );
+      pageCount = Math.max(
+        pageCount,
+        Math.ceil(result.total_count / SEARCH_PAGE_SIZE),
+      );
+    }
+
+    addSearchResults(commits, result.items || []);
+  }
+}
+
 async function updateProductiveBox(github, core) {
   const { viewer } = await github.graphql(`
     query {
       viewer {
-        id
+        createdAt
         login
       }
     }
   `);
 
-  const { user } = await github.graphql(
-    `
-      query ($login: String!) {
-        user(login: $login) {
-          repositoriesContributedTo(last: 100, includeUserRepositories: true) {
-            nodes {
-              isFork
-              name
-              owner {
-                login
-              }
-            }
-          }
-        }
-      }
-    `,
-    { login: viewer.login },
+  const now = new Date();
+  const from = formatSearchTimestamp(new Date(viewer.createdAt));
+  const to = formatSearchTimestamp(now);
+  const commits = new Map();
+
+  await collectCommitsForRange(github, core, viewer.login, from, to, commits);
+  const committedDates = [...commits.values()];
+  core.info(
+    `Collected ${committedDates.length} unique non-fork commits from ${from} through ${to}`,
   );
-
-  const repositories = (user?.repositoriesContributedTo?.nodes || []).filter(
-    (repository) => repository && !repository.isFork,
-  );
-  const committedDates = [];
-
-  for (let index = 0; index < repositories.length; index += 10) {
-    const batch = repositories.slice(index, index + 10);
-    const histories = await Promise.all(
-      batch.map(async (repository) => {
-        try {
-          const result = await github.graphql(
-            `
-              query ($owner: String!, $name: String!, $authorId: ID!) {
-                repository(owner: $owner, name: $name) {
-                  defaultBranchRef {
-                    target {
-                      ... on Commit {
-                        history(first: 100, author: { id: $authorId }) {
-                          nodes {
-                            committedDate
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            `,
-            {
-              owner: repository.owner.login,
-              name: repository.name,
-              authorId: viewer.id,
-            },
-          );
-
-          return (
-            result.repository?.defaultBranchRef?.target?.history?.nodes || []
-          ).map((commit) => commit.committedDate);
-        } catch (error) {
-          core.warning(
-            `Skipped ${repository.owner.login}/${repository.name}: ${error.message}`,
-          );
-          return [];
-        }
-      }),
-    );
-
-    committedDates.push(...histories.flat());
-  }
 
   const periods = [
     { label: "🌞 Morning", commits: 0 },
@@ -275,7 +352,7 @@ async function collectStats(github) {
   } while (cursor);
 
   if (ALL_COMMITS) {
-    const { data } = await github.request("GET /search/commits", {
+    const { data } = await requestCommitSearchApi(github, {
       q: `author:${stats.login}`,
       per_page: 1,
       headers: {

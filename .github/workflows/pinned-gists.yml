@@ -1,6 +1,12 @@
 name: Update pinned gists
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/scripts/update-pinned-gists.cjs"
+      - ".github/workflows/pinned-gists.yml"
   schedule:
     - cron: "17 */12 * * *"
   workflow_dispatch:
