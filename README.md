@@ -77,7 +77,21 @@
 <br>
 <br>
 
-<img src="https://github.com/heeseungy/heeseungy/blob/output/github-snake-dark.svg" width="100%">
+<picture>
+  <source
+    media="(prefers-color-scheme: dark)"
+    srcset="https://raw.githubusercontent.com/heeseungy/heeseungy/output/github-snake-dark.svg"
+  />
+  <source
+    media="(prefers-color-scheme: light)"
+    srcset="https://raw.githubusercontent.com/heeseungy/heeseungy/output/github-snake.svg"
+  />
+  <img
+    alt="github contribution snake"
+    src="https://raw.githubusercontent.com/heeseungy/heeseungy/output/github-snake.svg"
+    width="100%"
+  />
+</picture>
 
 <br>
 <br>
