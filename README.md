@@ -12,17 +12,18 @@
 
 <br>
 <br>
+
 <hr>
 
-<br>
 <br>
 
 <!-- <details>
 <br>
 <br> -->
-<summary>
-🧑‍💻 About me
-</summary>
+<!-- <summary> -->
+<h4>🧑‍💻 About me</h4>
+<br>
+<!-- </summary> -->
 
 <!-- <h3 align="left">🖥️ Languages &amp; Frameworks</h3> -->
 
