@@ -13,62 +13,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  productive-box:
-    name: Update productive box
+  update:
+    name: Update Gist cards
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
-      - name: Check out productive-box
+      - name: Check out profile repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: maxam2017/productive-box
-          ref: 94a79b346d2c07214d7587ba66138d415ac9c33c # v1.2.0
-          path: productive-box
           persist-credentials: false
 
-      - name: Set up Node.js 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-          package-manager-cache: false
-
-      - name: Update productive-box Gist
+      - name: Update productive and stats Gists
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GIST_ID: 39fb8577cc2df2228c15eb51a422e4bf
+          PRODUCTIVE_GIST_ID: 39fb8577cc2df2228c15eb51a422e4bf
+          STATS_GIST_ID: 4d9bedda66e7fe058b401160157085ee
           TIMEZONE: Asia/Seoul
-        run: node productive-box/dist/index.js
-
-  github-stats-box:
-    name: Update GitHub stats box
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Check out github-stats-box
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: bokub/github-stats-box
-          ref: b950951494505fda9e8f1a23797f8b5daa334a9d
-          path: github-stats-box
-          persist-credentials: false
-
-      - name: Set up Node.js 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-          package-manager-cache: false
-
-      - name: Install github-stats-box dependencies
-        working-directory: github-stats-box
-        run: npm ci --omit=dev --ignore-scripts
-
-      - name: Update GitHub stats Gist
-        working-directory: github-stats-box
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GIST_ID: 4d9bedda66e7fe058b401160157085ee
           ALL_COMMITS: "true"
           K_FORMAT: "true"
-        run: node index.js
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          retries: 3
+          script: |
+            const updatePinnedGists = require("./.github/scripts/update-pinned-gists.cjs");
+            await updatePinnedGists({ github, core });
