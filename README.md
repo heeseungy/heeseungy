@@ -24,7 +24,7 @@
 🧑‍💻 About me
 </summary>
 
-<h3 align="left">🖥️ Languages &amp; Frameworks</h3>
+<!-- <h3 align="left">🖥️ Languages &amp; Frameworks</h3> -->
 
 <table width="100%">
   <thead>
